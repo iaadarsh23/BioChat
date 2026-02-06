@@ -1,35 +1,22 @@
-
 from fastapi import FastAPI
 from pydantic import BaseModel
+from backend.app.llms.llm import generatedLLMResponse
 
 app = FastAPI()
 
+# this is where we define what and type of message we will get. we use class here to define the shape of our input data
 
 
 
-
-
-
-# @app.get("/health")
-# async def root():
-#     return {"message": "ok"}
-
-# @app.get("/chat")
-
-# async def chatting():
-#     return {"message" : "hey Im bioChat! How can i help you"}
-
-
-# getting user's data and sending it to api and sending back responses
-
-
-
-
-class user(BaseModel):
-    user_input = input("You :")
-
-
+class chatResponse(BaseModel):
+   message : str
 
 @app.post("/chat")
-async def messaging(msg: user):
-    return f"you asked: ${msg}" 
+
+async def llmResponse(req:chatResponse):
+   reply = generatedLLMResponse(req.message)
+   return {
+      "BioChat": reply 
+   }
+
+   
