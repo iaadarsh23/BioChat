@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from backend.app.llms.llm import generatedLLMResponse
+from app.llms.llm import generatedLLMResponse
 
 app = FastAPI()
 
