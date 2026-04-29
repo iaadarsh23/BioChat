@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const marketingPages = ["science", "accuracy", "enterprise"];
@@ -100,12 +100,22 @@ const initialWorkspaceSessions = [
 	},
 ];
 
+const welcomeSuggestions = [
+	"What is CRISPR?",
+	"How does the immune system work?",
+	"Explain DNA replication",
+	"What causes cancer?",
+];
+
+const apiBaseUrl =
+	(import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+
 function App() {
 	const [activePage, setActivePage] = useState("science");
 	const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
 	if (workspaceOpen) {
-		return <WorkspacePage onClose={() => setWorkspaceOpen(false)} />;
+		return <WorkspacePage onClose={() => setWorkspaceOpen(false)} defaultSidebarsOpen={false} />;
 	}
 
 	return (
@@ -402,7 +412,7 @@ function AccuracyPage() {
 			<footer className="marketing-footer compact">
 				<div className="footer-column wide">
 					<div className="footer-title">HELIX BIOLABS</div>
-					<p>© 2024 HELIX BIOLABS. PROCURED FOR CLINICAL USE.</p>
+					<p>Â© 2024 HELIX BIOLABS. PROCURED FOR CLINICAL USE.</p>
 				</div>
 				<div className="footer-column">
 					<a href="#0">Research</a>
@@ -566,12 +576,13 @@ function EnterprisePage() {
 	);
 }
 
-function WorkspacePage({ onClose }) {
+function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 	const [sessions, setSessions] = useState(initialWorkspaceSessions);
 	const [activeSessionId, setActiveSessionId] = useState(initialWorkspaceSessions[0].id);
 	const [draft, setDraft] = useState("");
-	const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
-	const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+	const [isSending, setIsSending] = useState(false);
+	const [leftSidebarOpen, setLeftSidebarOpen] = useState(defaultSidebarsOpen);
+	const [rightSidebarOpen, setRightSidebarOpen] = useState(defaultSidebarsOpen);
 	const inputRef = useRef(null);
 	const currentUser = getSignedInUser();
 	const userDisplayName = currentUser?.name || currentUser?.email || "";
@@ -600,34 +611,95 @@ function WorkspacePage({ onClose }) {
 		setDraft("");
 	}
 
-	function handleSendMessage() {
+	async function handleSendMessage() {
 		const trimmed = draft.trim();
-		if (!trimmed) return;
+		if (!trimmed || isSending) return;
+
+		const userMessage = {
+			id: `message-${Date.now()}`,
+			role: "user",
+			content: trimmed,
+			timestamp: formatTime(new Date()),
+		};
 
 		setSessions((current) =>
 			current.map((session) => {
 				if (session.id !== activeSessionId) return session;
 
-				const nextMessages = [
-					...session.messages,
-					{
-						id: `message-${Date.now()}`,
-						role: "user",
-						content: trimmed,
-						timestamp: formatTime(new Date()),
-					},
-				];
-
 				return {
 					...session,
 					title: session.messages.length === 0 ? buildSessionTitle(trimmed) : session.title,
-					messages: nextMessages,
+					messages: [...session.messages, userMessage],
 					updatedAt: Date.now(),
 				};
 			}),
 		);
 
 		setDraft("");
+		setIsSending(true);
+
+		try {
+			const response = await fetch(`${apiBaseUrl}/api/chat`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ message: trimmed }),
+			});
+
+			const data = await response.json();
+			const assistantContent =
+				data?.BioChat ||
+				data?.response ||
+				data?.message ||
+				data?.error ||
+				"Helix returned an empty response.";
+
+			setSessions((current) =>
+				current.map((session) => {
+					if (session.id !== activeSessionId) return session;
+
+					return {
+						...session,
+						messages: [
+							...session.messages,
+							{
+								id: `message-${Date.now()}-assistant`,
+								role: "assistant",
+								content: assistantContent,
+								timestamp: formatTime(new Date()),
+							},
+						],
+						updatedAt: Date.now(),
+					};
+				}),
+			);
+		} catch (error) {
+			setSessions((current) =>
+				current.map((session) => {
+					if (session.id !== activeSessionId) return session;
+
+					return {
+						...session,
+						messages: [
+							...session.messages,
+							{
+								id: `message-${Date.now()}-error`,
+								role: "assistant",
+								content:
+									error instanceof Error
+										? `Unable to reach the backend: ${error.message}`
+										: "Unable to reach the backend.",
+								timestamp: formatTime(new Date()),
+							},
+						],
+						updatedAt: Date.now(),
+					};
+				}),
+			);
+		} finally {
+			setIsSending(false);
+		}
 	}
 
 	function handleComposerKeyDown(event) {
@@ -671,7 +743,12 @@ function WorkspacePage({ onClose }) {
 				.join(" ")}
 		>
 			<aside className="workspace-sidebar">
-				<BrandLockup label="Helix" className="workspace-brand" size="sidebar" />
+				<BrandLockup
+					label="Helix"
+					className="workspace-brand"
+					size="sidebar"
+					thinking={isSending}
+				/>
 				<button type="button" className="workspace-button" onClick={createSession}>
 					<span>+</span>
 					New Session
@@ -724,7 +801,12 @@ function WorkspacePage({ onClose }) {
 							<span className="icon icon-sidebar" aria-hidden="true" />
 						</button>
 						<div className="workspace-title-block">
-							<BrandLockup label="Helix" className="workspace-brand-inline" size="topbar" />
+							<BrandLockup
+								label="Helix"
+								className="workspace-brand-inline"
+								size="topbar"
+								thinking={isSending}
+							/>
 							<span className="workspace-brand-pill">Your AI lab partner for biology</span>
 						</div>
 					</div>
@@ -756,7 +838,7 @@ function WorkspacePage({ onClose }) {
 						onClick={() => setLeftSidebarOpen(true)}
 						aria-label="Show left sidebar"
 					>
-						Open Sidebar
+						›
 					</button>
 				)}
 				{!rightSidebarOpen && (
@@ -766,11 +848,11 @@ function WorkspacePage({ onClose }) {
 						onClick={() => setRightSidebarOpen(true)}
 						aria-label="Show right sidebar"
 					>
-						Open Panel
+						‹
 					</button>
 				)}
 
-				<div className="workspace-conversation">
+				<div className="workspace-conversation chat-container">
 					{activeSession.messages.length === 0 ? (
 						<div className="workspace-empty">
 							<div className="workspace-empty-logo-wrap">
@@ -786,23 +868,42 @@ function WorkspacePage({ onClose }) {
 							<div className="workspace-empty-label">Helix Workspace</div>
 							<h3>Welcome to Helix</h3>
 							<p>From cells to systems — ask biology, get clarity.</p>
+							<div className="suggestion-chips">
+								{welcomeSuggestions.map((suggestion) => (
+									<button
+										key={suggestion}
+										type="button"
+										onClick={() => {
+											setDraft(suggestion);
+											inputRef.current?.focus();
+										}}
+									>
+										{suggestion}
+									</button>
+								))}
+							</div>
 						</div>
 					) : (
 						activeSession.messages.map((message, index) => (
-							<div key={message.id} className="message-stack">
+							<div
+								key={message.id}
+								className={message.role === "user" ? "message-stack msg-user" : "message-stack msg-helix"}
+							>
+								{message.role === "assistant" ? (
+									<>
+										<div className="msg-avatar">H</div>
+										<div className="msg-body">
+											<AssistantMessageContent content={message.content} />
+										</div>
+									</>
+								) : (
+									<div className="msg-user-bubble">
+										<p>{message.content}</p>
+									</div>
+								)}
 								<div
-									className={
-										message.role === "user"
-											? `bubble user-bubble${index === activeSession.messages.length - 1 ? " lower" : ""}`
-											: "bubble ai-bubble"
-									}
+									className={message.role === "user" ? "message-meta right" : "message-meta helix"}
 								>
-									{message.role === "assistant" && (
-										<div className="bubble-label">HELIX</div>
-									)}
-									<p>{message.content}</p>
-								</div>
-								<div className={message.role === "user" ? "message-meta right" : "message-meta"}>
 									{message.timestamp} {message.role === "user" ? "YOU" : "HELIX"}
 								</div>
 							</div>
@@ -819,12 +920,18 @@ function WorkspacePage({ onClose }) {
 							value={draft}
 							onChange={(event) => setDraft(event.target.value)}
 							onKeyDown={handleComposerKeyDown}
+							disabled={isSending}
 							placeholder="Type a message..."
 						/>
 						<span className="composer-side">TXT</span>
 					</div>
-					<button type="button" className="composer-send" onClick={handleSendMessage}>
-						↑
+					<button
+						type="button"
+						className="composer-send"
+						onClick={handleSendMessage}
+						disabled={isSending}
+					>
+						{isSending ? "…" : "\u2191"}
 					</button>
 				</div>
 			</section>
@@ -882,13 +989,124 @@ function buildInitials(value) {
 	return words.map((word) => word.charAt(0).toUpperCase()).join("");
 }
 
-function BrandLockup({ label, className = "", size = "marketing" }) {
+function BrandLockup({ label, className = "", size = "marketing", thinking = false }) {
 	return (
 		<div className={`brand-lockup ${className}`.trim()}>
-			<img src={helixLogoSrc} alt="Helix logo" className={`brand-logo brand-logo-${size}`} />
+			<img
+				src={helixLogoSrc}
+				alt="Helix logo"
+				className={`brand-logo brand-logo-${size}${thinking ? " is-thinking" : ""}`}
+			/>
 			<span>{label}</span>
 		</div>
 	);
 }
 
+function AssistantMessageContent({ content }) {
+	return (
+		<div
+			className="assistant-rich-text"
+			dangerouslySetInnerHTML={{ __html: renderHelixResponse(content) }}
+		/>
+	);
+}
+
+function renderHelixResponse(text) {
+	const lines = normalizeStreamLines(text).split("\n");
+	let html = "";
+	let inExploreBlock = false;
+	let exploreHTML = "";
+
+	for (let i = 0; i < lines.length; i += 1) {
+		const line = lines[i].trim();
+		if (!line) {
+			if (!inExploreBlock) {
+				html += '<div style="height:12px"></div>';
+			}
+			continue;
+		}
+
+		if (line.startsWith("📋")) {
+			html += `<div class="block-roadmap">${formatInline(line)}</div>`;
+			inExploreBlock = false;
+		} else if (line.startsWith("🔬")) {
+			html += `<div class="block-confidence">${formatInline(line)}</div>`;
+			inExploreBlock = false;
+		} else if (line.startsWith("🧠")) {
+			html += `<div class="block-socratic">${formatInline(line)}</div>`;
+			inExploreBlock = false;
+		} else if (line.startsWith("💡")) {
+			inExploreBlock = true;
+			exploreHTML = `<div class="block-explore"><div class="block-explore-title">💡 Explore further</div>`;
+		} else if (inExploreBlock && line.startsWith("-")) {
+			const content = line.slice(1).trim();
+			exploreHTML += `<div class="block-explore-item">${formatInline(content)}</div>`;
+			const nextLine = lines[i + 1]?.trim() || "";
+			if (!nextLine.startsWith("-") && nextLine !== "") {
+				exploreHTML += "</div>";
+				html += exploreHTML;
+				inExploreBlock = false;
+			}
+		} else if (line.startsWith("⚠️")) {
+			html += `<div class="block-warning">${formatInline(line)}</div>`;
+			inExploreBlock = false;
+		} else if (line.startsWith("-") || line.startsWith("•")) {
+			const content = line.slice(1).trim();
+			html += `<div class="bullet-item"><span class="bullet-dot"></span><span>${formatInline(content)}</span></div>`;
+		} else if (/^\(?\d+[\)\.]\s/.test(line)) {
+			html += renderStructuredParagraph(line, "section-para");
+		} else {
+			html += renderStructuredParagraph(line);
+		}
+	}
+
+	if (inExploreBlock) {
+		exploreHTML += "</div>";
+		html += exploreHTML;
+	}
+
+	return html;
+}
+
+function formatInline(text) {
+	return escapeHtml(text)
+		.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+		.replace(/\*(.*?)\*/g, "<em>$1</em>")
+		.replace(/`(.*?)`/g, "<code>$1</code>");
+}
+
+function renderStructuredParagraph(text, className = "") {
+	const formatted = formatInline(text);
+	const leadingHeadingMatch = formatted.match(
+		/^(?:\(?\d+[\)\.]\s+)?<strong>([^<]+:)<\/strong>\s*(.*)$/i,
+	);
+
+	if (leadingHeadingMatch) {
+		const [, heading, rest] = leadingHeadingMatch;
+		const classAttribute = className ? ` class="${className}"` : "";
+		const body = rest ? `<span>${rest}</span>` : "";
+		return `<div${classAttribute}><h3>${heading}</h3>${body}</div>`;
+	}
+
+	const classAttribute = className ? ` class="${className}"` : "";
+	return `<p${classAttribute}>${formatted}</p>`;
+}
+
+function normalizeStreamLines(text) {
+	return text
+		.replace(/\r/g, "")
+		.replace(/\s*(📋 Covering:|⚠️ Misconception check:|🔬 Confidence:|🧠 Think about this:|💡 Explore further:)/g, "\n$1")
+		.replace(/\s-\s/g, "\n- ")
+		.trim();
+}
+
+function escapeHtml(text) {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
+
 export default App;
+
+
