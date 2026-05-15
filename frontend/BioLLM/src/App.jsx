@@ -1,4 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import "./App.css";
 
 const marketingPages = ["science", "accuracy", "enterprise"];
@@ -108,14 +109,42 @@ const welcomeSuggestions = [
 ];
 
 const apiBaseUrl =
-	(import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+	(import.meta.env.VITE_API_URL || "https://biochat-production.up.railway.app").replace(/\/$/, "");
 
 function App() {
-	const [activePage, setActivePage] = useState("science");
-	const [workspaceOpen, setWorkspaceOpen] = useState(false);
+	return (
+		<Routes>
+			<Route path="/" element={<LandingRoute />} />
+			<Route
+				path="/chat"
+				element={
+					<ProtectedRoute>
+						<WorkspacePage defaultSidebarsOpen={false} />
+					</ProtectedRoute>
+				}
+			/>
+			<Route path="*" element={<Navigate to="/" replace />} />
+		</Routes>
+	);
+}
 
-	if (workspaceOpen) {
-		return <WorkspacePage onClose={() => setWorkspaceOpen(false)} defaultSidebarsOpen={false} />;
+function ProtectedRoute({ children }) {
+	const token = localStorage.getItem("helix_token");
+	return token ? children : <Navigate to="/" replace />;
+}
+
+function LandingRoute() {
+	const [activePage, setActivePage] = useState("science");
+	const [authState, setAuthState] = useState({ open: false, mode: "login" });
+	const navigate = useNavigate();
+	const token = localStorage.getItem("helix_token");
+
+	function openAuth(mode = "login") {
+		if (token) {
+			navigate("/chat");
+			return;
+		}
+		setAuthState({ open: true, mode });
 	}
 
 	return (
@@ -123,18 +152,25 @@ function App() {
 			<MarketingHeader
 				activePage={activePage}
 				onPageChange={setActivePage}
-				onOpenWorkspace={() => setWorkspaceOpen(true)}
+				onOpenAuth={openAuth}
 			/>
 			<main>
-				{activePage === "science" && <SciencePage />}
+				{activePage === "science" && <SciencePage onOpenAuth={openAuth} />}
 				{activePage === "accuracy" && <AccuracyPage />}
 				{activePage === "enterprise" && <EnterprisePage />}
 			</main>
+			{authState.open ? (
+				<AuthModal
+					mode={authState.mode}
+					onClose={() => setAuthState((current) => ({ ...current, open: false }))}
+					onModeChange={(mode) => setAuthState((current) => ({ ...current, mode }))}
+				/>
+			) : null}
 		</div>
 	);
 }
 
-function MarketingHeader({ activePage, onPageChange, onOpenWorkspace }) {
+function MarketingHeader({ activePage, onPageChange, onOpenAuth }) {
 	return (
 		<header className="topbar">
 			<BrandLockup label="HELIX" className="brand" size="marketing" />
@@ -153,15 +189,15 @@ function MarketingHeader({ activePage, onPageChange, onOpenWorkspace }) {
 			<div className="topbar-actions">
 				{activePage === "science" ? (
 					<>
-						<button type="button" className="text-button">
+						<button type="button" className="text-button" onClick={() => onOpenAuth("login")}>
 							Sign In
 						</button>
-						<button type="button" className="primary-button" onClick={onOpenWorkspace}>
+						<button type="button" className="primary-button" onClick={() => onOpenAuth("signup")}>
 							Get Started
 						</button>
 					</>
 				) : (
-					<button type="button" className="primary-button small" onClick={onOpenWorkspace}>
+					<button type="button" className="primary-button small" onClick={() => onOpenAuth("login")}>
 						Sign In
 					</button>
 				)}
@@ -170,7 +206,7 @@ function MarketingHeader({ activePage, onPageChange, onOpenWorkspace }) {
 	);
 }
 
-function SciencePage() {
+function SciencePage({ onOpenAuth }) {
 	return (
 		<section className="page science-page">
 			<div className="science-hero">
@@ -200,7 +236,7 @@ function SciencePage() {
 						the clinic, and the frontier of research.
 					</p>
 					<div className="hero-actions">
-						<button type="button" className="primary-button">
+						<button type="button" className="primary-button" onClick={() => onOpenAuth("signup")}>
 							Get Started
 						</button>
 						<button type="button" className="ghost-button">
@@ -309,6 +345,152 @@ function SciencePage() {
 				</div>
 			</footer>
 		</section>
+	);
+}
+
+function AuthModal({ mode, onClose, onModeChange }) {
+	const navigate = useNavigate();
+	const location = useLocation();
+	const [email, setEmail] = useState("");
+	const [password, setPassword] = useState("");
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState("");
+	const [success, setSuccess] = useState("");
+
+	useEffect(() => {
+		function handleEscape(event) {
+			if (event.key === "Escape") {
+				onClose();
+			}
+		}
+
+		window.addEventListener("keydown", handleEscape);
+		return () => window.removeEventListener("keydown", handleEscape);
+	}, [onClose]);
+
+	useEffect(() => {
+		setError("");
+		setSuccess("");
+	}, [mode]);
+
+	async function handleSubmit(event) {
+		event.preventDefault();
+
+		if (!email.trim() || !password.trim()) {
+			setError("Please enter both email and password.");
+			setSuccess("");
+			return;
+		}
+
+		setLoading(true);
+		setError("");
+		setSuccess("");
+
+		try {
+			if (mode === "signup") {
+				const signupResponse = await fetch(`${apiBaseUrl}/signup`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ email: email.trim(), password }),
+				});
+
+				const signupData = await signupResponse.json().catch(() => ({}));
+				if (!signupResponse.ok) {
+					throw new Error(
+						signupData.detail || signupData.message || "Unable to create account.",
+					);
+				}
+
+				setSuccess("Account created. Signing you in...");
+			}
+
+			const loginResponse = await fetch(`${apiBaseUrl}/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ email: email.trim(), password }),
+			});
+
+			const loginData = await loginResponse.json().catch(() => ({}));
+			if (!loginResponse.ok || !loginData.access_token) {
+				throw new Error(loginData.detail || loginData.message || "Login failed.");
+			}
+
+			localStorage.setItem("helix_token", loginData.access_token);
+			localStorage.setItem("helix_token_type", loginData.token_type || "bearer");
+			localStorage.setItem("helix_user_email", email.trim());
+			window.__HELIX_AUTH_USER__ = { email: email.trim(), name: email.trim() };
+			onClose();
+			navigate("/chat", { replace: location.pathname === "/chat" });
+		} catch (submitError) {
+			setError(submitError instanceof Error ? submitError.message : "Something went wrong.");
+			setSuccess("");
+		} finally {
+			setLoading(false);
+		}
+	}
+
+	return (
+		<div className="auth-modal-backdrop" onClick={onClose}>
+			<div className="auth-modal" onClick={(event) => event.stopPropagation()}>
+				<button type="button" className="auth-modal-close" onClick={onClose} aria-label="Close auth modal">
+					x
+				</button>
+				<div className="auth-modal-header">
+					<div className="auth-modal-kicker">Helix Access</div>
+					<h2>{mode === "login" ? "Sign in to continue" : "Create your Helix account"}</h2>
+					<p>
+						{mode === "login"
+							? "Use your secure Helix credentials to enter the workspace."
+							: "Create an account to unlock document-grounded analysis and chat."}
+					</p>
+				</div>
+				<div className="auth-modal-switch">
+					<button
+						type="button"
+						className={mode === "login" ? "auth-switch active" : "auth-switch"}
+						onClick={() => onModeChange("login")}
+					>
+						Login
+					</button>
+					<button
+						type="button"
+						className={mode === "signup" ? "auth-switch active" : "auth-switch"}
+						onClick={() => onModeChange("signup")}
+					>
+						Signup
+					</button>
+				</div>
+				<form className="auth-modal-form" onSubmit={handleSubmit}>
+					<label>
+						<span>Email</span>
+						<input
+							type="email"
+							value={email}
+							onChange={(event) => setEmail(event.target.value)}
+							placeholder="doctor@clinic.com"
+							autoComplete="email"
+							required
+						/>
+					</label>
+					<label>
+						<span>Password</span>
+						<input
+							type="password"
+							value={password}
+							onChange={(event) => setPassword(event.target.value)}
+							placeholder="Enter your password"
+							autoComplete={mode === "login" ? "current-password" : "new-password"}
+							required
+						/>
+					</label>
+					{error ? <div className="auth-modal-feedback error">{error}</div> : null}
+					{success ? <div className="auth-modal-feedback success">{success}</div> : null}
+					<button type="submit" className="primary-button auth-modal-submit" disabled={loading}>
+						{loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
+					</button>
+				</form>
+			</div>
+		</div>
 	);
 }
 
@@ -577,15 +759,27 @@ function EnterprisePage() {
 }
 
 function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
+	const navigate = useNavigate();
 	const [sessions, setSessions] = useState(initialWorkspaceSessions);
 	const [activeSessionId, setActiveSessionId] = useState(initialWorkspaceSessions[0].id);
 	const [draft, setDraft] = useState("");
 	const [isSending, setIsSending] = useState(false);
+	const [uploadedFiles, setUploadedFiles] = useState([]);
+	const [uploadLoading, setUploadLoading] = useState(false);
+	const [analysisLoading, setAnalysisLoading] = useState(false);
+	const [workspaceError, setWorkspaceError] = useState("");
 	const [leftSidebarOpen, setLeftSidebarOpen] = useState(defaultSidebarsOpen);
 	const [rightSidebarOpen, setRightSidebarOpen] = useState(defaultSidebarsOpen);
 	const inputRef = useRef(null);
+	const fileInputRef = useRef(null);
 	const currentUser = getSignedInUser();
 	const userDisplayName = currentUser?.name || currentUser?.email || "";
+	const token = localStorage.getItem("helix_token");
+	const tokenType = localStorage.getItem("helix_token_type") || "bearer";
+	const authHeader = useMemo(
+		() => ({ Authorization: `${capitalizeTokenType(tokenType)} ${token}` }),
+		[token, tokenType],
+	);
 
 	const activeSession = useMemo(
 		() =>
@@ -609,6 +803,111 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 		setSessions((current) => [session, ...current]);
 		setActiveSessionId(session.id);
 		setDraft("");
+	}
+
+	function addAssistantMessage(content, type = "text") {
+		setSessions((current) =>
+			current.map((session) => {
+				if (session.id !== activeSessionId) return session;
+
+				return {
+					...session,
+					messages: [
+						...session.messages,
+						{
+							id: `message-${Date.now()}-assistant`,
+							role: "assistant",
+							type,
+							content,
+							timestamp: formatTime(new Date()),
+						},
+					],
+					updatedAt: Date.now(),
+				};
+			}),
+		);
+	}
+
+	function handleLogout() {
+		localStorage.removeItem("helix_token");
+		localStorage.removeItem("helix_token_type");
+		localStorage.removeItem("helix_user_email");
+		if (typeof window !== "undefined") {
+			window.__HELIX_AUTH_USER__ = null;
+		}
+		navigate("/", { replace: true });
+	}
+
+	async function handleUpload(event) {
+		const file = event.target.files?.[0];
+		if (!file || uploadLoading) return;
+
+		setUploadLoading(true);
+		setWorkspaceError("");
+
+		const formData = new FormData();
+		formData.append("file", file);
+
+		try {
+			const response = await fetch(`${apiBaseUrl}/upload`, {
+				method: "POST",
+				headers: authHeader,
+				body: formData,
+			});
+			const data = await response.json().catch(() => ({}));
+
+			if (!response.ok) {
+				throw new Error(data.detail || data.message || "Unable to upload file.");
+			}
+
+			setUploadedFiles((current) => [
+				{ id: `${file.name}-${Date.now()}`, name: file.name },
+				...current,
+			]);
+			addAssistantMessage(`Uploaded **${file.name}**. You can ask questions about this document now.`);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Unable to upload this document.";
+			setWorkspaceError(message);
+			addAssistantMessage(`Error: ${message}`);
+		} finally {
+			setUploadLoading(false);
+			if (event.target) {
+				event.target.value = "";
+			}
+		}
+	}
+
+	async function handleAnalyze() {
+		if (analysisLoading) return;
+
+		setAnalysisLoading(true);
+		setWorkspaceError("");
+
+		try {
+			const response = await fetch(`${apiBaseUrl}/analyze`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					...authHeader,
+				},
+				body: JSON.stringify({}),
+			});
+			const data = await response.json().catch(() => ({}));
+
+			if (!response.ok) {
+				throw new Error(data.detail || data.message || "Analysis failed.");
+			}
+
+			addAssistantMessage(data.analysis || data.response || "Analysis complete.");
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Unable to analyze reports.";
+			setWorkspaceError(message);
+			addAssistantMessage(`Error: ${message}`);
+		} finally {
+			setAnalysisLoading(false);
+		}
 	}
 
 	async function handleSendMessage() {
@@ -639,18 +938,57 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 		setIsSending(true);
 
 		try {
-			const response = await fetch(`${apiBaseUrl}/api/chat`, {
+			const response = await fetch(`${apiBaseUrl}/ask`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
+					...authHeader,
 				},
-				body: JSON.stringify({ message: trimmed }),
+				body: JSON.stringify({ query: trimmed }),
 			});
+
+			const contentType = response.headers.get("content-type") || "";
+			if (!response.ok) {
+				const errorPayload = contentType.includes("application/json")
+					? await response.json().catch(() => ({}))
+					: {};
+				throw new Error(
+					errorPayload.detail || errorPayload.message || "Unable to process your question.",
+				);
+			}
+
+			if (contentType.includes("image/png")) {
+				const imageBlob = await response.blob();
+				const imageUrl = URL.createObjectURL(imageBlob);
+
+				setSessions((current) =>
+					current.map((session) => {
+						if (session.id !== activeSessionId) return session;
+
+						return {
+							...session,
+							messages: [
+								...session.messages,
+								{
+									id: `message-${Date.now()}-diagram`,
+									role: "assistant",
+									type: "image",
+									content: imageUrl,
+									timestamp: formatTime(new Date()),
+								},
+							],
+							updatedAt: Date.now(),
+						};
+					}),
+				);
+				return;
+			}
 
 			const data = await response.json();
 			const assistantContent =
 				data?.BioChat ||
 				data?.response ||
+				data?.analysis ||
 				data?.message ||
 				data?.error ||
 				"Helix returned an empty response.";
@@ -688,7 +1026,7 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 								role: "assistant",
 								content:
 									error instanceof Error
-										? `Unable to reach the backend: ${error.message}`
+										? `Error: ${error.message}`
 										: "Unable to reach the backend.",
 								timestamp: formatTime(new Date()),
 							},
@@ -777,7 +1115,40 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 				</div>
 				<div className="workspace-group">
 					<span className="workspace-label">Workspace</span>
-					<div className="workspace-reserved" aria-hidden="true" />
+					<div className="workspace-tool-stack">
+						<input
+							ref={fileInputRef}
+							type="file"
+							className="workspace-file-input"
+							onChange={handleUpload}
+						/>
+						<button
+							type="button"
+							className="workspace-button workspace-tool-button"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={uploadLoading}
+						>
+							<span>↑</span>
+							{uploadLoading ? "Uploading..." : "Upload Document"}
+						</button>
+						<button
+							type="button"
+							className="workspace-button workspace-tool-button"
+							onClick={handleAnalyze}
+							disabled={analysisLoading}
+						>
+							<span>⌁</span>
+							{analysisLoading ? "Analyzing..." : "Analyze Reports"}
+						</button>
+						{workspaceError ? <div className="workspace-error">{workspaceError}</div> : null}
+						<div className="workspace-file-list">
+							{uploadedFiles.length === 0 ? (
+								<span>No documents uploaded.</span>
+							) : (
+								uploadedFiles.map((file) => <span key={file.id}>{file.name}</span>)
+							)}
+						</div>
+					</div>
 				</div>
 				<div className="workspace-user">
 					<div className="user-dot">{userDisplayName ? buildInitials(userDisplayName) : ""}</div>
@@ -825,7 +1196,7 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 						>
 							<span className="icon icon-panel" aria-hidden="true" />
 						</button>
-						<button type="button" className="workspace-top-button" onClick={onClose}>
+						<button type="button" className="workspace-top-button" onClick={onClose ?? handleLogout}>
 							<span className="icon icon-close" aria-hidden="true" />
 						</button>
 					</div>
@@ -893,7 +1264,15 @@ function WorkspacePage({ onClose, defaultSidebarsOpen = true }) {
 									<>
 										<div className="msg-avatar">H</div>
 										<div className="msg-body">
-											<AssistantMessageContent content={message.content} />
+											{message.type === "image" ? (
+												<img
+													className="workspace-response-image"
+													src={message.content}
+													alt="Generated Helix diagram"
+												/>
+											) : (
+												<AssistantMessageContent content={message.content} />
+											)}
 										</div>
 									</>
 								) : (
@@ -974,7 +1353,17 @@ function slugify(value) {
 
 function getSignedInUser() {
 	if (typeof window === "undefined") return null;
-	return window.__HELIX_AUTH_USER__ ?? null;
+	const cachedUser = window.__HELIX_AUTH_USER__;
+	if (cachedUser) return cachedUser;
+
+	const email = localStorage.getItem("helix_user_email");
+	return email ? { email } : null;
+}
+
+function capitalizeTokenType(value) {
+	if (!value) return "Bearer";
+	const normalized = value.toLowerCase();
+	return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function buildInitials(value) {
